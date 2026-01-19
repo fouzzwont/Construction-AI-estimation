@@ -1,0 +1,50 @@
+project:
+  name: "Construction AI Estimation"
+  version: "1.0.0"
+  environment: "development"
+
+pdf_processing:
+  dpi: 300
+  image_format: "JPEG"
+  quality: 95
+  input_path: "data/raw_pdfs"
+  output_path: "data/processed_images"
+
+image_preprocessing:
+  contrast_enhancement: true
+  noise_reduction: true
+
+annotation:
+  labels:
+    - "rebar"
+    - "beam"
+    - "slab"
+    - "column"
+    - "wall"
+
+yolo:
+  model_name: "yolov8s"
+  epochs: 50
+  batch_size: 8
+  imgsz: 640
+  device: "cuda"  # or "cpu"
+  workers: 2
+  patience: 10
+  save_path: "models/yolo_weights"
+  weights_path: "models/yolo_weights/best.pt"
+
+inference:
+  conf_threshold: 0.5
+  iou_threshold: 0.45
+  device: "cuda"  # or "cpu"
+
+engineering:
+  pixel_to_mm_scale: 1.0
+  concrete_density: 2400
+  steel_density: 7850
+
+deployment:
+  api_host: "0.0.0.0"
+  api_port: 8000
+  upload_limit_mb: 50
+  debug: true
