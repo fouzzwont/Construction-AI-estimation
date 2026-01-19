@@ -29,3 +29,9 @@ Formwork: 450 m²             → ₹2,25,000
 TOTAL ESTIMATE: ₹13,32,000
 ----------------------------------------
 
+## Purpose
+Student portfolio project, Demonstrates end-to-end AI engineering skills:
+-Data pipeline design
+-Custom model training
+-Production deployment
+-Business value delivery
