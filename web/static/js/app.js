@@ -19,6 +19,7 @@
     projectName: $("#projectName"),
     scaleSelect: $("#scaleSelect"),
     marketSelect: $("#marketSelect"),
+    consentCheck: $("#consentCheck"),
     progressWrap: $("#progressWrap"),
     progressStage: $("#progressStage"),
     progressPct: $("#progressPct"),
@@ -147,6 +148,7 @@
     if (el.scaleSelect.value) fd.append("scale", el.scaleSelect.value);
     if (el.marketSelect.value) fd.append("market", el.marketSelect.value);
     if (el.projectName.value.trim()) fd.append("project_name", el.projectName.value.trim());
+    fd.append("consent", el.consentCheck && el.consentCheck.checked ? "true" : "false");
 
     try {
       const res = await fetch("/api/upload", { method: "POST", body: fd });

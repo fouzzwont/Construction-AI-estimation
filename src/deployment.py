@@ -72,13 +72,23 @@ def _get_job(job_id: str) -> dict[str, Any] | None:
         return _jobs.get(job_id)
 
 
-def _run_job(job_id: str, pdf_path: Path, scale_override: float | None, market: str | None, project_name: str) -> None:
+def _run_job(
+    job_id: str,
+    pdf_path: Path,
+    scale_override: float | None,
+    market: str | None,
+    project_name: str,
+    consent: bool = False,
+) -> None:
     try:
         def progress(stage: str, pct: float) -> None:
             _set_job(job_id, stage=stage, progress=round(pct, 3), status="running")
 
         output = _pipeline.run(
             pdf_path,
+            job_id=job_id,
+            upload_path=pdf_path,
+            consent=consent,
             scale_override=scale_override,
             market=market,
             project_name=project_name,
@@ -93,6 +103,7 @@ def _run_job(job_id: str, pdf_path: Path, scale_override: float | None, market: 
             pages=output.pages,
             csv_path=output.csv_path,
             pdf_path=output.pdf_path,
+            manifest_path=output.manifest_path,
             elapsed=output.elapsed,
         )
         logger.info("Job %s completed", job_id)
@@ -158,12 +169,13 @@ def upload():
         scale_override = None
     market = request.form.get("market") or None
     project_name = (request.form.get("project_name") or "").strip()
+    consent = (request.form.get("consent") or "").strip().lower() in ("1", "true", "yes", "on")
 
     _set_job(job_id, status="queued", stage="Queued", progress=0.0, filename=filename)
 
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, target, scale_override, market, project_name),
+        args=(job_id, target, scale_override, market, project_name, consent),
         daemon=True,
     )
     thread.start()

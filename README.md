@@ -19,6 +19,7 @@ with downloadable CSV and PDF reports.
 - [How it works](#how-it-works)
 - [Web UI](#web-ui)
 - [CLI](#cli)
+- [Using uploads as training data](#using-uploads-as-training-data)
 - [HTTP API](#http-api)
 - [Rate card](#rate-card)
 - [Configuration](#configuration)
@@ -145,6 +146,8 @@ python main.py --serve --host 127.0.0.1 --port 8000
 - Drag-and-drop or browse for a PDF (limit configurable, default 80 MB)
 - Optional **project name**, **drawing scale** (leave on *Auto*), and
   **rate market**
+- Opt-in **training-use consent** checkbox, off by default — see
+  [Consent](#consent)
 - Live progress: parsing → scale & elements → quantities → reports
 - Results tabs: **BOQ**, **Reinforcement schedule**, **Annotated drawings**,
   **Assumptions**
@@ -169,6 +172,12 @@ python main.py --train
 
 # run detection on a single image with trained weights
 python main.py --infer page.png
+
+# turn past jobs into a YOLO dataset
+python main.py --export-dataset
+
+# delete jobs older than the retention window
+python main.py --prune --days 7 --dry-run
 ```
 
 Outputs land in `output/estimates/<job_id>/`:
@@ -177,9 +186,138 @@ Outputs land in `output/estimates/<job_id>/`:
 output/estimates/<job_id>/
 ├── <job_id>_estimate.csv
 ├── <job_id>_estimate.pdf
+├── manifest.json          # source PDF hash + every detected box
 ├── page_001_annotated.jpg
 └── result.json
 ```
+
+---
+
+## Using uploads as training data
+
+Every job writes a **manifest** (`output/estimates/<job_id>/manifest.json`) and
+those manifests can be compiled into a YOLO dataset with one command. This is
+the only supported way to grow the corpus: the app itself never phones home.
+
+### Where an upload goes
+
+| Path | Contents |
+|---|---|
+| `data/uploads/<job_id>_<name>.pdf` | The original file, exactly as uploaded |
+| `data/processed_images/<job_id>_<name>_NNN.jpg` | Rendered page rasters |
+| `output/estimates/<job_id>/` | Estimate CSV/PDF, `result.json`, `manifest.json` |
+| `data/dataset/` | Exported YOLO corpus (images, labels, `dataset.yaml`) |
+
+The web API mints `<job_id>` and passes it into the pipeline, so the upload,
+the page rasters and the output folder all share one handle.
+
+### The manifest
+
+```jsonc
+{
+  "schema": 1,
+  "job_id": "39a388233469",
+  "created_at": "2026-10-22T20:58:02Z",
+  "consent": true,                 // may this drawing be used for training?
+  "source": { "filename": "plan.pdf", "sha256": "ec8eaf…", "bytes": 3693 },
+  "pages": [
+    {
+      "index": 0,
+      "image_name": "39a388233469_plan_000.jpg",
+      "width_pt": 1683.78, "height_pt": 2383.937,   // PDF space
+      "px_width": 3673, "px_height": 5200,          // raster space
+      "scale": { "ratio": 100, "method": "text" },
+      "elements": [
+        { "kind": "column", "source": "vector", "confidence": 0.7,
+          "bbox_pt": [109.13, 2209.61, 117.64, 2218.11],
+          "length_mm": 300.0, "width_mm": 300.0 }
+      ]
+    }
+  ]
+}
+```
+
+Boxes are stored in **PDF points**, not pixels, so they stay valid if you
+re-render at a different resolution. `px_width`/`px_height` record the actual
+raster size so normalisation is exact even when the pixmap rounds.
+
+### Export
+
+```bash
+python main.py --export-dataset                       # all jobs
+python main.py --export-dataset --clean               # wipe first
+python main.py --export-dataset --require-consent     # only consented jobs
+python main.py --export-dataset --kinds column,beam   # subset of classes
+python main.py --export-dataset --tile-size 0         # whole pages, no tiling
+```
+
+It writes the standard Ultralytics layout:
+
+```
+data/dataset/
+├── dataset.yaml
+├── images/{train,val,test}/
+└── labels/{train,val,test}/
+```
+
+`python main.py --train` then picks it up unchanged. The exporter deliberately
+does **not** import ultralytics or torch, so you can build a dataset on a
+machine that cannot train.
+
+### Why the export tiles the pages
+
+An A1 sheet rendered at 5200 px wide, downscaled to the trainer's 960 px input,
+shrinks a 2 px rebar line to under half a pixel — the model cannot learn what it
+cannot see. Exporting 1024 px tiles (128 px overlap) keeps thin elements at
+native resolution. Boxes are clipped to each tile; a box is kept if at least
+`min_visible` (35%) of its area survives, otherwise it is counted as dropped and
+discarded rather than labelled with a misleading fragment.
+
+### Degenerate boxes
+
+Beams and grid lines are drawn as single lines, so their stored box has **zero
+thickness** (`y1 == y2`). The annotation overlay hides this by stroking every
+rectangle with a minimum line width, but a zero-area box is not a trainable
+label. The exporter pads such boxes to `min_thickness_px` (4 px) on the thin
+axis and reports how many it padded. Concrete volumes are unaffected — those
+come from `length_mm`/`width_mm`, not from the raster box.
+
+### Splits never leak
+
+The train/val/test split is applied **per job**, not per image. Splitting per
+tile would put near-identical overlapping crops of the same drawing on both
+sides of the fence and inflate the metrics. `tools/dataset_test.py` fails if any
+job appears in more than one split.
+
+With only a couple of drawings the hash can put every job in one split, so the
+exporter rebalances enough jobs to leave `train` (and `val`) non-empty and says
+so in its report.
+
+### Empty tiles
+
+Tiles with no elements are mostly discarded, but a deterministic
+`background_ratio` share (10%) is kept as negative examples — a model that never
+sees an empty region learns to hallucinate columns in margins. Keeping *all*
+empty tiles would bury the positives instead.
+
+### Consent
+
+The upload form has an opt-in checkbox (off by default) that is stored as
+`consent` in the manifest. `dataset.require_consent` / `--require-consent`
+restricts exports to drawings that were explicitly opted in. Analysis and
+estimation always run; consent only governs training use.
+
+### Retention
+
+```bash
+python main.py --prune --days 7 --dry-run   # what would go
+python main.py --prune --days 7             # delete it
+```
+
+Drawings are client-confidential, so the default window is 7 days. Pruning
+removes the upload, the rendered pages and the estimate folder — including the
+manifest, so pruned jobs leave the corpus too. On Render the disk is ephemeral
+anyway; retention matters for self-hosted deployments.
 
 ---
 
@@ -271,6 +409,15 @@ rates:
 deployment:
   api_port: 8000
   upload_limit_mb: 80
+
+dataset:
+  tile_size: 1024           # YOLO export tile size (0 = whole pages)
+  tile_overlap: 128
+  min_thickness_px: 4       # pad zero-width/height (single-line) boxes
+  background_ratio: 0.1     # share of empty tiles kept as negatives
+  split: {train: 70, val: 15, test: 15}   # applied per job
+  require_consent: false    # true = export only opted-in drawings
+  retention_days: 7         # used by --prune
 ```
 
 ---
@@ -284,7 +431,8 @@ deployment:
   `models/yolo_weights/best.pt` and a labelled dataset are **not** included,
   so the YOLO branch is inactive by default. The take-off is carried by the
   vector-geometry engine and the reinforcement-schedule parser, which is more
-  accurate on real CAD exports anyway.
+  accurate on real CAD exports anyway. You can build a corpus from your own
+  uploads — see [Using uploads as training data](#using-uploads-as-training-data).
 - **OCR is not enabled.** Tesseract is not installed; scanned pages therefore
   rely on the OpenCV vision pass, which is considerably weaker than the vector
   path. Vector PDFs are strongly recommended.
@@ -344,6 +492,7 @@ Construction-AI-estimation-main/
 │   ├── rates.py               # rate card + market multipliers
 │   ├── report.py              # CSV + PDF reports
 │   ├── annotate.py            # drawing overlays
+│   ├── dataset.py             # manifests, YOLO export, retention
 │   ├── pipeline.py            # job orchestration
 │   ├── deployment.py          # Flask API
 │   └── yolo_trainer.py        # optional YOLO training
@@ -353,6 +502,7 @@ Construction-AI-estimation-main/
 ├── tools/
 │   ├── selftest.py            # 15 end-to-end engine checks
 │   ├── apitest.py             # API smoke tests
+│   ├── dataset_test.py        # validates the exported YOLO corpus
 │   └── make_sample_drawing.py # generates a known-answer A1 test drawing
 ├── data/                      # uploads, rendered pages, dataset (git-ignored)
 └── output/                    # estimates and reports (git-ignored)
@@ -365,7 +515,14 @@ Construction-AI-estimation-main/
 ```bash
 python tools/selftest.py    # engine: parsing, detection, quantities, totals
 python tools/apitest.py     # HTTP API: upload, poll, result, downloads
+python tools/dataset_test.py # exported YOLO corpus: labels, bounds, splits
 ```
+
+`tools/dataset_test.py` is the guard rail for anything you might train on. It
+re-derives every label row and fails on a malformed line, a class id outside
+`names`, a normalised value outside `[0, 1]`, a box that escapes its frame, a
+degenerate (zero-area) box, an image without a label file, a label without an
+image, or a job that appears in more than one split.
 
 `tools/selftest.py` builds a synthetic A1 drawing with a known layout (a 4 × 3
 column grid, 6 rooms, 7 grid beams, and an 8-row reinforcement schedule) and
@@ -467,8 +624,11 @@ Keep `--workers 1` and scale with `--threads` instead.
 - **Cold starts.** The free plan spins the instance down after ~15 minutes of
   inactivity; the next request takes ~30–60 s while the container boots.
 - **Ephemeral disk.** `data/` and `output/` are wiped on every deploy/restart,
-  so in-flight and past jobs disappear. Download the CSV/PDF while the result
-  is on screen. For durable results, point `paths.*` at object storage.
+  so in-flight and past jobs disappear — **including their manifests**. That
+  means the live app cannot accumulate a training corpus: uploads are only
+  exportable on a machine where the disk persists. Run the estimator locally
+  for anything you plan to train on, and download the CSV/PDF while the result
+  is on screen.
 - **512 MB RAM.** Fine for single-sheet drawings. Very large multi-page PDFs
   may need a paid plan (raise `pdf_processing.cv_max_dimension` down /
   `max_render_dimension` down to reduce memory).

@@ -40,6 +40,11 @@ class PdfPage:
     height_pt: float
     image_path: str | None = None
     zoom: float = 1.0
+    # Actual raster dimensions. Kept separate from width_pt/height_pt because
+    # rounding in the pixmap means px != pt * zoom exactly; YOLO labels must be
+    # normalised against the real pixel size or boxes drift by a pixel or two.
+    px_width: int = 0
+    px_height: int = 0
     words: list[dict[str, Any]] = field(default_factory=list)
     text: str = ""
     drawings: list[dict[str, Any]] = field(default_factory=list)
@@ -124,6 +129,8 @@ class PDFProcessor:
                     out_file = self.output_path / f"{prefix}_{idx:03d}.jpg"
                     pix.save(str(out_file), jpg_quality=quality)
                     pdf_page.image_path = str(out_file)
+                    pdf_page.px_width = int(pix.width)
+                    pdf_page.px_height = int(pix.height)
                 except Exception as exc:
                     logger.warning("Rasterising page %d failed: %s", idx, exc)
 

@@ -15,6 +15,7 @@ from .annotate import annotate_page
 from .blueprint.detector import BlueprintDetector
 from .blueprint.models import ScaleInfo
 from .config import Config, get_config
+from .dataset import MANIFEST_NAME, build_manifest, write_manifest
 from .estimator import EstimateResult, Estimator
 from .pdf_processor import PDFProcessor
 from .rates import load_rate_card
@@ -33,6 +34,7 @@ class PipelineOutput:
     csv_path: str | None
     pdf_path: str | None
     elapsed: float
+    manifest_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +43,7 @@ class PipelineOutput:
             "pages": self.pages,
             "csv_path": self.csv_path,
             "pdf_path": self.pdf_path,
+            "manifest_path": self.manifest_path,
             "elapsed_seconds": round(self.elapsed, 2),
         }
 
@@ -59,6 +62,9 @@ class EstimationPipeline:
         self,
         pdf_path: str | Path,
         *,
+        job_id: str | None = None,
+        upload_path: str | Path | None = None,
+        consent: bool = False,
         scale_override: float | None = None,
         market: str | None = None,
         project_name: str = "",
@@ -66,7 +72,9 @@ class EstimationPipeline:
         make_reports: bool = True,
     ) -> PipelineOutput:
         started = time.time()
-        job_id = uuid.uuid4().hex[:12]
+        # Callers that already minted an id (the web API) pass it in, so the
+        # upload, the output folder and the manifest all share one handle.
+        job_id = job_id or uuid.uuid4().hex[:12]
         pdf_path = Path(pdf_path)
 
         def report(stage: str, pct: float) -> None:
@@ -102,8 +110,14 @@ class EstimationPipeline:
 
         page_payloads: list[dict[str, Any]] = []
         annotated_paths: list[str] = []
+        page_lookup = {p.index: p for p in pages}
         for analysis in analyses:
             payload = analysis.to_dict()
+            raster = page_lookup.get(analysis.index)
+            if raster is not None:
+                payload["px_width"] = raster.px_width
+                payload["px_height"] = raster.px_height
+                payload["image_name"] = Path(raster.image_path).name if raster.image_path else None
             annotated_path = None
             if analysis.image_path:
                 target = out_dir / f"page_{analysis.index + 1:03d}_annotated.jpg"
@@ -129,6 +143,25 @@ class EstimationPipeline:
         payload = out_dir / "result.json"
         payload.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
 
+        # The manifest is the durable half of the job: it records the source
+        # PDF, its hash, and every detected box, so the corpus stays usable
+        # after _jobs (memory only) is gone.
+        manifest_path = None
+        try:
+            manifest = build_manifest(
+                job_id=job_id,
+                pdf_path=pdf_path,
+                upload_path=upload_path,
+                pages=pages,
+                analyses=analyses,
+                estimate=result,
+                consent=consent,
+                app_version=str(self.cfg.get("project.version", "2.0.0")),
+            )
+            manifest_path = write_manifest(out_dir / MANIFEST_NAME, manifest)
+        except Exception as exc:  # never fail an estimate over bookkeeping
+            logger.warning("Could not write manifest for %s: %s", job_id, exc)
+
         logger.info("Job %s finished in %.2fs", job_id, elapsed)
         return PipelineOutput(
             job_id=job_id,
@@ -137,6 +170,7 @@ class EstimationPipeline:
             csv_path=csv_path,
             pdf_path=pdf_path_out,
             elapsed=elapsed,
+            manifest_path=manifest_path,
         )
 
     # ------------------------------------------------------------------ #

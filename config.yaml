@@ -55,6 +55,28 @@ yolo:
 inference:
   conf_threshold: 0.35
   iou_threshold: 0.45
+
+dataset:
+  # ---- YOLO export (python main.py --export-dataset) ----------------------
+  # Drawings are huge: an A1 sheet capped at 5200 px downscaled to the
+  # trainer's 960 px loses 2 px rebar lines entirely. Exporting tiles keeps
+  # thin elements at native resolution instead.
+  tile_size: 1024              # px, 0 = export whole pages
+  tile_overlap: 128            # px of overlap between neighbouring tiles
+  min_box_px: 4                # drop boxes thinner than this after clipping
+  min_thickness_px: 4          # zero-width/height boxes (single-line beams) are
+                               # padded to this, since a zero-area box cannot be learned
+  min_visible: 0.35            # keep a box if at least this fraction survives
+  background_ratio: 0.1        # share of empty tiles kept as negatives (0 = none)
+  split:                       # applied per *job*, never per image
+    train: 70
+    val: 15
+    test: 15
+  require_consent: false       # true = only export jobs marked as consented
+
+  # ---- retention (python main.py --prune) ---------------------------------
+  # Client drawings are confidential; do not keep them indefinitely.
+  retention_days: 7
   device: "auto"
 
 scale:

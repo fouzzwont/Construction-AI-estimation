@@ -3,6 +3,8 @@
     python main.py --serve                 start the web UI
     python main.py --pdf drawing.pdf       run the full estimation pipeline
     python main.py --train                 train the YOLO detector
+    python main.py --export-dataset        build a YOLO dataset from job manifests
+    python main.py --prune --days 7        delete jobs older than a week
     python main.py --infer page.jpg        detect on a single image
 """
 
@@ -111,6 +113,37 @@ def run_train(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_export_dataset(args: argparse.Namespace) -> int:
+    from src.dataset import export_dataset
+
+    cfg = get_config()
+    cfg.ensure_dirs()
+    report = export_dataset(
+        cfg,
+        tile_size=args.tile_size,
+        require_consent=True if args.require_consent else None,
+        kinds=[k.strip() for k in args.kinds.split(",")] if args.kinds else None,
+        clean=args.clean,
+    )
+    print()
+    print(report.summary())
+    if report.jobs_used == 0:
+        print()
+        print("Nothing exported. Jobs only appear here once they write a")
+        print("manifest.json - i.e. any run you do from now on.")
+    return 0
+
+
+def run_prune(args: argparse.Namespace) -> int:
+    from src.dataset import prune
+
+    cfg = get_config()
+    report = prune(cfg, days=args.days, dry_run=args.dry_run)
+    print()
+    print(report.summary(args.dry_run))
+    return 0
+
+
 def run_infer(args: argparse.Namespace) -> int:
     from src.blueprint.detector import BlueprintDetector
     from src.blueprint.models import Element
@@ -143,6 +176,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--serve", action="store_true", help="start the web UI")
     p.add_argument("--train", action="store_true", help="train the YOLO detector")
     p.add_argument("--infer", type=str, help="run detection on a single image")
+    p.add_argument(
+        "--export-dataset",
+        action="store_true",
+        help="convert job manifests into a YOLO dataset under data/dataset/",
+    )
+    p.add_argument("--tile-size", type=int, default=None, help="override dataset.tile_size (0 = whole pages)")
+    p.add_argument("--kinds", type=str, default=None, help="comma-separated classes to export, e.g. column,beam")
+    p.add_argument("--require-consent", action="store_true", help="only export jobs marked as consented")
+    p.add_argument("--clean", action="store_true", help="wipe data/dataset before exporting")
+    p.add_argument("--prune", action="store_true", help="delete jobs older than --days")
+    p.add_argument("--days", type=int, default=None, help="retention window for --prune (default: config)")
+    p.add_argument("--dry-run", action="store_true", help="report what --prune would delete")
     p.add_argument("--scale", type=float, help="override the drawing scale (e.g. 100 for 1:100)")
     p.add_argument("--market", type=str, help="rate market (india_urban, gcc, ...)")
     p.add_argument("--name", type=str, help="project name for the report")
@@ -165,6 +210,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_train(args)
     if args.infer:
         return run_infer(args)
+    if args.export_dataset:
+        return run_export_dataset(args)
+    if args.prune:
+        return run_prune(args)
 
     build_parser().print_help()
     return 0

@@ -87,11 +87,22 @@
           </label>
         </div>
 
+        <label class="field field-check">
+          <input type="checkbox" id="consentCheck" />
+          <span>
+            <span class="field-label">Allow this drawing to be used to improve detection</span>
+            <span class="field-hint">
+              Off by default. The drawing is analysed and estimated either way &mdash;
+              this only controls whether it is eligible for a training-set export.
+            </span>
+          </span>
+        </label>
+
         <button class="btn btn-primary btn-lg" id="analyseBtn" disabled>
           <span class="btn-spinner" hidden></span>
           <span id="analyseLabel">Analyse drawing</span>
         </button>
-        <p class="fineprint">Nothing is uploaded to a third party &mdash; processing happens on this machine.</p>
+        <p class="fineprint">The PDF is sent to the estimation server, analysed there, and never shared with anyone else.</p>
       </div>
     </div>
 
