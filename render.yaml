@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: construction-ai-estimation
+    runtime: python
+    plan: free
+    region: singapore          # closest to India; change if you prefer
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn src.deployment:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: FLASK_RELOAD
+        value: "false"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+# ---------------------------------------------------------------------------
+# Docker alternative
+# ---------------------------------------------------------------------------
+# To build the image on Render instead of using the native Python runtime,
+# replace the service block above with the one below. Keep --workers 1 either
+# way: job state is in-memory, so multiple workers break job polling.
+#
+#  - type: web
+#    name: construction-ai-estimation
+#    runtime: docker
+#    dockerfilePath: ./Dockerfile
+#    plan: free
+#    region: singapore
+#    healthCheckPath: /health
+#    envVars:
+#      - key: WEB_THREADS
+#        value: "8"
+#      - key: WEB_TIMEOUT
+#        value: "120"

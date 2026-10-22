@@ -1,28 +1,35 @@
-# PDF Processing
-pdf2image==1.17.0
-PyPDF2==4.0.1
-Pillow==10.1.0
+# ---------------------------------------------------------------------------
+# Core - required for the estimation engine
+# ---------------------------------------------------------------------------
+pymupdf>=1.23          # PDF parsing: vector geometry, text, page rendering
+opencv-python-headless>=4.8
+numpy>=1.24
+PyYAML>=6.0
 
-# Computer Vision & ML
-opencv-python==4.8.1.78
-torch==2.1.1
-torchvision==0.16.1
-ultralytics==8.0.196
+# ---------------------------------------------------------------------------
+# Web UI / API
+# ---------------------------------------------------------------------------
+Flask>=3.0
+werkzeug>=3.0
+gunicorn>=21.2.0       # production WSGI server (Linux hosts: Render/Railway/Fly)
 
-# Data Processing
-numpy==1.24.3
-pandas==2.1.3
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+reportlab>=4.0
 
-# Label Studio Integration (optional, for manual annotation)
-label-studio==1.11.0
+# ---------------------------------------------------------------------------
+# Optional - YOLO detector (python main.py --train / --infer)
+#
+# These are heavy (torch is ~2 GB). The take-off engine does NOT need them:
+# it reads the PDF vector geometry and the reinforcement schedule directly.
+# Install them only if you intend to train or run the optional detector.
+# ---------------------------------------------------------------------------
+# ultralytics>=8.0
+# torch>=2.1
+# torchvision>=0.16
 
-# API & Deployment
-Flask==3.0.0
-uvicorn==0.24.0
-
-# Utilities
-pyyaml==6.0.1
-tqdm==4.66.1
-python-dotenv==1.0.0
-requests==2.31.0
-
+# ---------------------------------------------------------------------------
+# Optional - OCR for scanned drawings (also needs the Tesseract binary)
+# ---------------------------------------------------------------------------
+# pytesseract>=0.3.10

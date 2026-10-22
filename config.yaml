@@ -1,18 +1,35 @@
 project:
   name: "Construction AI Estimation"
-  version: "1.0.0"
+  version: "2.0.0"
   environment: "development"
+
+paths:
+  raw_pdfs: "data/raw_pdfs"
+  processed_images: "data/processed_images"
+  dataset_root: "data/dataset"
+  models: "models/yolo_weights"
+  output: "output"
+  estimates: "output/estimates"
+  reports: "output/reports"
+  logs: "logs"
+  uploads: "data/uploads"
 
 pdf_processing:
   dpi: 300
   image_format: "JPEG"
-  quality: 95
-  input_path: "data/raw_pdfs"
-  output_path: "data/processed_images"
+  quality: 92
+  max_pages: 60
+  render_for_cv: true          # rasterise pages for the CV pass
+  vector_first: true            # parse PDF vector geometry + text (exact)
+  max_render_dimension: 5200   # cap the rendered page (A1 at 300dpi = 9933px)
+  cv_mode: "auto"               # auto (scanned pages only) | always | off
+  cv_max_dimension: 2200        # working resolution for the vision pass
 
 image_preprocessing:
-  contrast_enhancement: true
-  noise_reduction: true
+  contrast: 1.35
+  brightness: 1.05
+  sharpness: 1.40
+  denoise: true
 
 annotation:
   labels:
@@ -21,30 +38,90 @@ annotation:
     - "slab"
     - "column"
     - "wall"
+    - "footing"
 
 yolo:
+  enabled: true
   model_name: "yolov8s"
-  epochs: 50
-  batch_size: 8
-  imgsz: 640
-  device: "cuda"  # or "cpu"
-  workers: 2
-  patience: 10
-  save_path: "models/yolo_weights"
   weights_path: "models/yolo_weights/best.pt"
+  epochs: 100
+  batch_size: 8
+  imgsz: 960
+  device: "auto"          # auto | cpu | cuda:0
+  workers: 2
+  patience: 15
+  save_path: "models/yolo_weights"
 
 inference:
-  conf_threshold: 0.5
+  conf_threshold: 0.35
   iou_threshold: 0.45
-  device: "cuda"  # or "cpu"
+  device: "auto"
 
-engineering:
-  pixel_to_mm_scale: 1.0
-  concrete_density: 2400
-  steel_density: 7850
+scale:
+  default: 100            # fallback 1:default
+  detect_from_text: true  # "SCALE 1:100" in title block / notes
+  detect_from_bar: true   # graphical scale bar
+  detect_from_dimension: true
+  min_confidence: 0.55
+
+estimation:
+  storey_height_m: 3.0
+  slab_thickness_mm: 125
+  beam_width_mm: 230
+  beam_depth_mm: 450
+  column_size_mm: 300
+  wall_thickness_mm: 230
+  wall_type: "masonry"      # masonry | rcc
+  footing_depth_mm: 600
+  cover_mm: 40
+  steel_ratio_kg_per_m3:
+    slab: 80
+    beam: 110
+    column: 160
+    wall: 90
+    footing: 70
+  rebar_diameters_mm: [8, 10, 12, 16, 20, 25]
+  rebar_distribution:      # share of total steel by diameter
+    "8": 0.05
+    "10": 0.12
+    "12": 0.24
+    "16": 0.30
+    "20": 0.21
+    "25": 0.08
+  default_concrete_grade: "M25"
+  default_steel_grade: "Fe500"
+
+rates:
+  market: "india_urban"
+  currency: "INR"
+  currency_symbol: "₹"
+  concrete_per_m3:
+    M20: 6500
+    M25: 7200
+    M30: 7900
+    M35: 8600
+  steel_per_tonne:
+    Fe415: 66000
+    Fe500: 72000
+    Fe550: 78000
+  formwork_per_m2:
+    slab: 520
+    beam: 640
+    column: 700
+    wall: 560
+  masonry_per_m3: 5400
+  market_multipliers:
+    india_urban: 1.00
+    india_rural: 0.88
+    gcc: 1.26
+    msec: 1.08
+    international: 1.85
 
 deployment:
-  api_host: "0.0.0.0"
+  api_host: "127.0.0.1"
   api_port: 8000
-  upload_limit_mb: 50
+  upload_limit_mb: 80
   debug: true
+  reload: false          # Flask auto-reloader (restarts the server on edits)
+  cors: false
+  max_workers: 2

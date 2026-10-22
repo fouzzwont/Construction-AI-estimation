@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Construction AI &mdash; Blueprint Estimation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127959;</text></svg>" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= header ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">AI</div>
+      <div class="brand-text">
+        <h1>Construction AI Estimation</h1>
+        <p>Upload a plan drawing &middot; detect rebar &amp; structure &middot; get a priced BOQ</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="chip" title="Drawing scale engine, reinforcement parser, vector + CV detection">
+        <span class="dot"></span>Engine v{{ version }}
+      </span>
+      <a class="btn btn-ghost" href="/health" target="_blank">Status</a>
+    </div>
+  </header>
+
+  <!-- ================= upload ================= -->
+  <section class="panel upload-panel" id="uploadPanel">
+    <div class="panel-head">
+      <h2>1 &middot; Upload project plan</h2>
+      <p>PDF drawings with vector linework are read exactly. Scanned drawings are handled by the vision pass.</p>
+    </div>
+
+    <div class="grid">
+      <!-- dropzone -->
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload PDF drawing">
+        <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+        <div class="dz-icon" id="dzIcon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M12 18v-6m0 0-2.5 2.5M12 12l2.5 2.5"/>
+          </svg>
+        </div>
+        <p class="dz-title">Drag &amp; drop a PDF blueprint</p>
+        <p class="dz-sub">or <span class="link">browse your files</span> &middot; max {{ upload_limit }} MB</p>
+        <div class="dz-file" id="dzFile" hidden>
+          <span class="dz-file-name" id="dzFileName"></span>
+          <span class="dz-file-size" id="dzFileSize"></span>
+        </div>
+      </div>
+
+      <!-- options -->
+      <div class="options">
+        <h3>Analysis options</h3>
+
+        <label class="field">
+          <span class="field-label">Project name <em>optional</em></span>
+          <input type="text" id="projectName" placeholder="e.g. 3BHK Residence - Block A" />
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Drawing scale</span>
+            <select id="scaleSelect">
+              <option value="">Auto-detect from drawing</option>
+              <option value="50">1:50</option>
+              <option value="100" selected>1:100</option>
+              <option value="200">1:200</option>
+              <option value="500">1:500</option>
+            </select>
+            <span class="field-hint" id="scaleHint">Leave on auto &mdash; the engine reads the title block and dimension lines.</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Rate market</span>
+            <select id="marketSelect">
+              {% for m in markets %}
+              <option value="{{ m }}" {% if m == default_market %}selected{% endif %}>{{ m.replace('_', ' ').title() }}</option>
+              {% endfor %}
+            </select>
+            <span class="field-hint">Local unit rates applied to the measured BOQ.</span>
+          </label>
+        </div>
+
+        <button class="btn btn-primary btn-lg" id="analyseBtn" disabled>
+          <span class="btn-spinner" hidden></span>
+          <span id="analyseLabel">Analyse drawing</span>
+        </button>
+        <p class="fineprint">Nothing is uploaded to a third party &mdash; processing happens on this machine.</p>
+      </div>
+    </div>
+
+    <!-- progress -->
+    <div class="progress-wrap" id="progressWrap" hidden>
+      <div class="progress-head">
+        <span class="progress-stage" id="progressStage">Preparing&hellip;</span>
+        <span class="progress-pct" id="progressPct">0%</span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      <ul class="steps" id="steps">
+        <li data-step="pdf">Parse PDF</li>
+        <li data-step="scale">Detect scale</li>
+        <li data-step="detect">Detect elements</li>
+        <li data-step="estimate">Estimate</li>
+        <li data-step="report">Reports</li>
+      </ul>
+    </div>
+
+    <div class="alert alert-error" id="errorBox" hidden></div>
+  </section>
+
+  <!-- ================= results ================= -->
+  <section class="panel results" id="resultsPanel" hidden>
+
+    <div class="panel-head result-head">
+      <div>
+        <h2>2 &middot; Estimate</h2>
+        <p id="resultSubtitle">&nbsp;</p>
+      </div>
+      <div class="result-actions">
+        <button class="btn btn-ghost" id="csvBtn" hidden>Download CSV</button>
+        <button class="btn btn-ghost" id="pdfBtn" hidden>Download PDF</button>
+        <button class="btn btn-primary" id="resetBtn">New drawing</button>
+      </div>
+    </div>
+
+    <!-- tiles -->
+    <div class="tiles" id="tiles"></div>
+
+    <!-- alerts -->
+    <div id="warningBox"></div>
+
+    <!-- tabs -->
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="summary" role="tab">Bill of quantities</button>
+      <button class="tab" data-tab="rebar" role="tab">Reinforcement</button>
+      <button class="tab" data-tab="drawings" role="tab">Annotated drawings</button>
+      <button class="tab" data-tab="assumptions" role="tab">Basis &amp; assumptions</button>
+    </div>
+
+    <div class="tab-panel active" id="tab-summary">
+      <div class="table-wrap">
+        <table class="data" id="boqTable">
+          <thead><tr><th>Category</th><th>Item</th><th class="num">Quantity</th><th>Unit</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="totals" id="totalsBox"></div>
+    </div>
+
+    <div class="tab-panel" id="tab-rebar">
+      <div class="table-wrap">
+        <table class="data" id="rebarTable">
+          <thead><tr><th>Diameter (mm)</th><th class="num">Total length (m)</th><th class="num">Nos</th><th class="num">Weight (kg)</th><th class="num">Weight (t)</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty-note" id="rebarEmpty" hidden>
+        No reinforcement schedule was readable on this drawing &mdash; steel quantities were derived from standard kg/m&sup3; ratios.
+      </p>
+    </div>
+
+    <div class="tab-panel" id="tab-drawings">
+      <div class="viewer">
+        <div class="viewer-tabs" id="pageTabs"></div>
+            <div class="viewer-stage">
+              <img id="pageImage" alt="Annotated drawing page" />
+            </div>
+          <div class="legend" id="legend"></div>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab-assumptions">
+      <h3>Assumptions used</h3>
+      <ul class="notes" id="assumptionList"></ul>
+      <h3 style="margin-top:22px">Detection notes</h3>
+      <ul class="notes" id="pageNotes"></ul>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <span>Construction AI Estimation &middot; v{{ version }}</span>
+    <span class="muted">Vector-accurate take-off &middot; reinforcement schedule parsing &middot; vision fallback</span>
+  </footer>
+</div>
+
+<script>window.APP = { currency: "{{ currency }}", version: "{{ version }}", uploadLimit: {{ upload_limit }} };</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

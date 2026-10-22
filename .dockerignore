@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Keep the build context small - these never belong inside the image
+# ---------------------------------------------------------------------------
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Runtime output (regenerated on boot; see Dockerfile)
+data/
+output/
+logs/
+
+# Trained weights are not shipped - the app reports yolo_available=false
+models/yolo_weights/*.pt
+models/yolo_weights/**/*.pt
+runs/
+*.onnx
+*.engine
+
+# Python caches / build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+Scripts/
+Lib/
+pyvenv.cfg
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local overrides and secrets
+config.local.yaml
+.env
+.env.*
+
+# Docs / CI that the runtime does not need
+Dockerfile
+.dockerignore
+README.md
+LICENSE

@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# Runtime data
+# ---------------------------------------------------------------------------
+data/
+output/
+logs/
+
+# Uploaded drawings, rendered pages and the (empty) YOLO dataset live here.
+data/uploads/
+data/raw_pdfs/
+data/processed_images/
+data/dataset/
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+# Trained weights are not tracked - train them with `python main.py --train`
+models/yolo_weights/*.pt
+models/yolo_weights/**/*.pt
+runs/
+*.onnx
+*.engine
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+Scripts/
+Lib/
+pyvenv.cfg
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Local overrides
+# ---------------------------------------------------------------------------
+config.local.yaml
+.env

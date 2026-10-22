@@ -1,149 +1,165 @@
-import os
-import logging
-from pathlib import Path
-from pdf2image import convert_from_path
-from PIL import Image, ImageEnhance, ImageFilter
-import yaml
-from tqdm import tqdm
+"""PDF handling: page rasterisation and native vector/text extraction.
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+The project deliberately prefers **native PDF parsing** (PyMuPDF) over an
+external Poppler install: vector CAD exports carry exact geometry, real text
+and title-block information, all of which make quantity take-off dramatically
+more accurate than working on a flattened raster.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
+
+from .config import Config, get_config
+
 logger = logging.getLogger(__name__)
 
-class PDFProcessor:
-    """Convert PDF drawings to high-quality images with preprocessing"""
-    
-    def __init__(self, config_path="config/config.yaml"):
-        """Initialize with configuration"""
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-        
-        self.pdf_config = self.config['pdf_processing']
-        self.prep_config = self.config['image_preprocessing']
-        
-        # Create output directory
-        self.output_path = Path(self.pdf_config['output_path'])
-        self.output_path.mkdir(parents=True, exist_ok=True)
-        
-        # WINDOWS POPPLER FIX - Try multiple common locations
-        possible_poppler_paths = [
-            r"C:\poppler\Library\bin",
-            r"C:\Program Files\poppler\bin",
-            None  # Let pdf2image find it automatically
-        ]
-        self.poppler_path = next((p for p in possible_poppler_paths if p and os.path.exists(p)), None)
-        
-        logger.info(f"PDFProcessor initialized. Output: {self.output_path}")
-        if self.poppler_path:
-            logger.info(f"Poppler found at: {self.poppler_path}")
-    
-    def convert_pdf_to_images(self, pdf_path, start_page=0, end_page=None):
-        """Convert PDF to images at specified DPI - WINDOWS COMPATIBLE"""
-        try:
-            logger.info(f"Converting PDF: {pdf_path}")
-            
-            kwargs = {
-                'dpi': self.pdf_config['dpi'],
-                'first_page': start_page + 1,
-                'last_page': end_page
-            }
-            
-            if self.poppler_path:
-                kwargs['poppler_path'] = self.poppler_path
-            
-            images = convert_from_path(str(pdf_path), **kwargs)
-            logger.info(f"Successfully converted {len(images)} pages")
-            return images
-        
-        except Exception as e:
-            logger.error(f"PDF2Image failed: {e}")
-            logger.info("Using fallback method...")
-            return self.fallback_convert(pdf_path)
-    
-    def fallback_convert(self, pdf_path):
-        """Fallback method using PIL (works without poppler)"""
-        try:
-            logger.warning("Using PIL fallback (lower quality but reliable)")
-            # Create dummy images - replace with real conversion if PyMuPDF available
-            import io
-            from PIL import Image
-            
-            # Get page count using basic method
-            with open(pdf_path, 'rb') as f:
-                content = f.read()
-                # Simple heuristic - most PDFs have 1-20 pages
-                page_count = min(20, max(1, len(content)//100000))
-            
-            images = []
-            for i in range(page_count):
-                img = Image.new('RGB', (2480, 3508), color='white')  # A4 at 300 DPI
-                images.append(img)
-                logger.info(f"Fallback: Generated page {i+1}")
-            
-            return images
-        except Exception as e:
-            logger.error(f"Fallback failed: {e}")
-            return []
-    
-    def enhance_image(self, image):
-        """Apply image preprocessing: contrast, noise reduction, etc."""
-        try:
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Contrast +1.5x
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(1.5)
-            
-            # Brightness +10%
-            enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(1.1)
-            
-            # Sharpness +50%
-            enhancer = ImageEnhance.Sharpness(image)
-            image = enhancer.enhance(1.5)
-            
-            return image
-        except:
-            return image
-    
-    def save_images(self, images, output_prefix="construction_drawing"):
-        """Save processed images to disk"""
-        saved_paths = []
-        
-        for i, image in enumerate(tqdm(images, desc="Saving pages")):
-            image = self.enhance_image(image)
-            
-            output_file = self.output_path / f"{output_prefix}_{i:03d}.jpg"
-            image.save(
-                output_file,
-                'JPEG',
-                quality=95,
-                optimize=True
-            )
-            saved_paths.append(str(output_file))
-            logger.info(f"Saved: {output_file}")
-        
-        return saved_paths
-    
-    def process_pdf(self, pdf_path, prefix="construction_drawing"):
-        """✅ FIXED: Complete pipeline: PDF → Images (SUPPORTS prefix!)"""
-        pdf_path = Path(pdf_path)
-        
-        # Convert to images
-        images = self.convert_pdf_to_images(str(pdf_path))
-        
-        if not images:
-            logger.error(f"❌ Failed to convert {pdf_path}")
-            return []
-        
-        # Save enhanced images
-        saved_paths = self.save_images(images, output_prefix=prefix)
-        
-        logger.info(f"✅ Processing complete. {len(saved_paths)} images saved to {self.output_path}")
-        return saved_paths
+try:
+    import pymupdf as fitz  # PyMuPDF >= 1.24 module name
 
-if __name__ == "__main__":
-    processor = PDFProcessor()
-    results = processor.process_pdf("data/raw_pdfs/sample.pdf")
-    print(f"Processed {len(results)} images total")
+    HAVE_FITZ = True
+except Exception:  # pragma: no cover
+    try:
+        import fitz as fitz  # older PyMuPDF
+
+        HAVE_FITZ = True
+    except Exception:
+        fitz = None  # type: ignore
+        HAVE_FITZ = False
+
+
+@dataclass
+class PdfPage:
+    """A single page of a PDF, both rasterised and parsed."""
+
+    index: int
+    width_pt: float
+    height_pt: float
+    image_path: str | None = None
+    zoom: float = 1.0
+    words: list[dict[str, Any]] = field(default_factory=list)
+    text: str = ""
+    drawings: list[dict[str, Any]] = field(default_factory=list)
+    text_blocks: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def width_mm(self) -> float:
+        return self.width_pt * 25.4 / 72.0
+
+    @property
+    def height_mm(self) -> float:
+        return self.height_pt * 25.4 / 72.0
+
+
+class PDFProcessor:
+    """Convert PDF drawings to high-resolution images and parse their content."""
+
+    def __init__(self, config: Config | None = None, config_path: str | Path | None = None):
+        self.cfg = config or (get_config() if config_path is None else load_config_safe(config_path))
+        self.pdf_cfg = self.cfg.section("pdf_processing")
+        self.prep_cfg = self.cfg.section("image_preprocessing")
+        self.output_path = self.cfg.path("paths.processed_images")
+        self.output_path.mkdir(parents=True, exist_ok=True)
+        self.page_count = 0
+        logger.info("PDFProcessor ready (PyMuPDF available=%s)", HAVE_FITZ)
+
+    # ------------------------------------------------------------------ #
+    # rasterisation
+    # ------------------------------------------------------------------ #
+    def render_pages(self, pdf_path: str | Path, prefix: str | None = None) -> list[PdfPage]:
+        """Render every page to JPEG and parse its native content."""
+        if not HAVE_FITZ:  # pragma: no cover
+            raise RuntimeError("PyMuPDF is required. Install it with: pip install pymupdf")
+
+        pdf_path = Path(pdf_path)
+        prefix = prefix or pdf_path.stem
+        doc = fitz.open(str(pdf_path))
+        dpi = int(self.pdf_cfg.get("dpi", 300))
+        base_zoom = dpi / 72.0
+        max_dimension = int(self.pdf_cfg.get("max_render_dimension", 5200))
+        quality = int(self.pdf_cfg.get("quality", 92))
+        max_pages = int(self.pdf_cfg.get("max_pages", 60))
+
+        pages: list[PdfPage] = []
+        for idx in range(min(doc.page_count, max_pages)):
+            page = doc.load_page(idx)
+            rect = page.rect
+            pdf_page = PdfPage(index=idx, width_pt=rect.width, height_pt=rect.height)
+
+            # Keep the raster within a sane pixel budget - an A1 sheet at
+            # 300 dpi is 9933 px tall and would blow up memory and time.
+            zoom = base_zoom
+            page_max_pt = max(rect.width, rect.height)
+            if max_dimension and page_max_pt * zoom > max_dimension:
+                zoom = max_dimension / page_max_pt
+            pdf_page.zoom = zoom
+            matrix = fitz.Matrix(zoom, zoom)
+
+            # ---- native content -------------------------------------- #
+            try:
+                pdf_page.words = page.get_text("words") or []
+            except Exception:
+                pdf_page.words = []
+            try:
+                pdf_page.text = page.get_text("text") or ""
+            except Exception:
+                pdf_page.text = ""
+            try:
+                pdf_page.text_blocks = page.get_text("dict") or {}
+                pdf_page.text_blocks = pdf_page.text_blocks.get("blocks", [])
+            except Exception:
+                pdf_page.text_blocks = []
+            try:
+                pdf_page.drawings = page.get_drawings() or []
+            except Exception:
+                pdf_page.drawings = []
+
+            # ---- raster ------------------------------------------------ #
+            if self.pdf_cfg.get("render_for_cv", True):
+                try:
+                    pix = page.get_pixmap(matrix=matrix, alpha=False)
+                    out_file = self.output_path / f"{prefix}_{idx:03d}.jpg"
+                    pix.save(str(out_file), jpg_quality=quality)
+                    pdf_page.image_path = str(out_file)
+                except Exception as exc:
+                    logger.warning("Rasterising page %d failed: %s", idx, exc)
+
+            pages.append(pdf_page)
+
+        self.page_count = len(pages)
+        doc.close()
+        logger.info("Parsed %d page(s) from %s", len(pages), pdf_path.name)
+        return pages
+
+    # ------------------------------------------------------------------ #
+    # legacy compatibility
+    # ------------------------------------------------------------------ #
+    def process_pdf(self, pdf_path: str | Path, prefix: str | None = None) -> list[str]:
+        """Render a PDF and return the list of written image paths."""
+        pages = self.render_pages(pdf_path, prefix=prefix)
+        return [p.image_path for p in pages if p.image_path]
+
+    def extract_text(self, pdf_path: str | Path) -> str:
+        if not HAVE_FITZ:  # pragma: no cover
+            return ""
+        doc = fitz.open(str(pdf_path))
+        text = "\n".join(doc.load_page(i).get_text("text") or "" for i in range(doc.page_count))
+        doc.close()
+        return text
+
+    def page_count(self, pdf_path: str | Path) -> int:
+        if not HAVE_FITZ:  # pragma: no cover
+            return 0
+        doc = fitz.open(str(pdf_path))
+        n = doc.page_count
+        doc.close()
+        return n
+
+
+def load_config_safe(config_path: str | Path) -> Config:
+    from .config import load_config
+
+    return load_config(config_path)
