@@ -424,9 +424,11 @@ def export_dataset(
         (labels_root / split).mkdir(parents=True, exist_ok=True)
 
     report = ExportReport()
-    # Seed every class so empty ones surface as a warning rather than vanishing.
+    # Seed the classes actually requested, so a --kinds subset does not report
+    # the classes you deliberately left out as "empty".
     for name in labels:
-        report.class_counts[name] = 0
+        if name in wanted:
+            report.class_counts[name] = 0
 
     jobs: list[tuple[Path, dict[str, Any], str]] = []
 

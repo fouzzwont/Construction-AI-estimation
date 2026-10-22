@@ -82,7 +82,12 @@ class EstimationPipeline:
                 progress(stage, pct)
 
         report("Parsing drawing", 0.05)
-        pages = self.pdf_processor.render_pages(pdf_path, prefix=f"{job_id}_{pdf_path.stem}")
+        # Web uploads are stored as "<job_id>_<name>.pdf", so prefixing with the
+        # id again would yield "<id>_<id>_<name>_000.jpg". Strip the copy first.
+        stem = pdf_path.stem
+        if stem.startswith(f"{job_id}_"):
+            stem = stem[len(job_id) + 1 :]
+        pages = self.pdf_processor.render_pages(pdf_path, prefix=f"{job_id}_{stem}")
         if not pages:
             raise RuntimeError("The PDF could not be read (no pages found).")
 
