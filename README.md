@@ -94,15 +94,29 @@ Rendering is capped at `max_render_dimension` (5200 px) so an A1 sheet at
 ### 2. Scale — `src/blueprint/scale.py`
 The denominator is resolved from, in order of trust:
 
-1. **Title block / notes** — `SCALE 1:100`, `SCALE - 1:50`
+1. **Title block / notes** — `SCALE 1:100`, `SCALE - 1:50`, and the US
+   conventions `SCALE 1/4" = 1'-0"` (1:48), `SCALE 1/8" = 1'-0"` (1:96) and
+   `SCALE 1" = 50'` (1:600). A stacked fraction extracted as `SCALE 1 4"` is
+   read as 1/4". Reading `1/4` as the denominator would inflate every area by
+   ~144×, so imperial forms are parsed before metric ones.
 2. **Dimension lines** — a labelled dimension matched against the line it
    annotates, cross-checked against the sheet size
 3. **Graphical scale bar** — a bar of known length
 4. **Manual override** — the `Drawing scale` dropdown in the UI, or `--scale`
    on the CLI
 
-Consolidation (`consolidate_scales`) picks the best-supported value and records
-which method won, so the report always states its own provenance.
+Noisy results are snapped to a conventional scale (a bar measured at 23.5 is
+1:25); values far from every convention are rejected as measurement noise.
+Consolidation (`consolidate_scales`) takes the **modal** title-block scale across
+the set — a 1:600 site plan does not define the 1:48 architectural sheets — and
+records which method won, so the report always states its own provenance.
+
+Two kinds of sheet are read for their schedule text but produce no quantities:
+
+- **`SCALE: NTS`** (not to scale) — there is no scale to price against.
+- **Elevations / sections / details** — a wall seen edge-on is a line, not a
+  footprint. Disable with `pdf_processing.plan_sheets_only: false`.
+
 
 ### 3. Element detection — `src/blueprint/elements.py`
 Vector geometry is classified by shape and drafting convention:
@@ -440,6 +454,11 @@ dataset:
   no title block, no dimension lines and no scale bar, the fallback
   `scale.default` is used and the estimate will be wrong by the square of the
   scale error. Check the reported scale before trusting the numbers.
+- **A multi-sheet set is summed sheet by sheet.** If a floor plan, a foundation
+  plan and a roof framing plan all describe the same house, uploading all three
+  counts it three times. Upload the single plan sheet you want priced, or read
+  the per-sheet breakdown and add up only the sheets that apply. Elevations,
+  sections, details and `NTS` sheets are skipped automatically.
 - **Quantities are geometric, not a substitute for a bill of quantities.** The
   engine measures what is drawn. It does not know about openings, drips, laps,
   wastage, water tanks, staircases, or builder's openings.
@@ -623,6 +642,17 @@ Keep `--workers 1` and scale with `--threads` instead.
 
 - **Cold starts.** The free plan spins the instance down after ~15 minutes of
   inactivity; the next request takes ~30–60 s while the container boots.
+- **Memory is the real limit.** The free plan has 512 MB. An 18-page A1 set
+  rendered at the default 5200 px peaked at **594 MB** and was OOM-killed
+  mid-job: the upload connection dropped, the page went blank and `health`
+  stopped answering until the instance came back. `render.yaml` therefore sets
+  `CAE_MAX_RENDER_DIMENSION=2400` and `CAE_DPI=144` on the free plan, which
+  brings the same drawing to **387 MB**. That is still above the 2200 px the CV
+  pass consumes, so analysis quality is unchanged — only the annotated overlay
+  is softer. Raise them on a paid plan.
+- **One job at a time.** `deployment.max_concurrent_jobs` (default 1) queues
+  analyses instead of running them together, because two concurrent jobs
+  multiply peak memory. A queued job reports *"Waiting for a free worker"*.
 - **Ephemeral disk.** `data/` and `output/` are wiped on every deploy/restart,
   so in-flight and past jobs disappear — **including their manifests**. That
   means the live app cannot accumulate a training corpus: uploads are only
@@ -634,6 +664,26 @@ Keep `--workers 1` and scale with `--threads` instead.
   `max_render_dimension` down to reduce memory).
 - **No trained model.** `yolo_available` is `false`; the vector + schedule
   engine handles the take-off. See [Honest limitations](#honest-limitations).
+
+### Tuning without editing config.yaml
+
+Any deployment can override the memory-relevant knobs with environment
+variables, which take precedence over `config.yaml`:
+
+| Variable | Config key | Free-plan value |
+|---|---|---|
+| `CAE_DPI` | `pdf_processing.dpi` | `144` |
+| `CAE_MAX_RENDER_DIMENSION` | `pdf_processing.max_render_dimension` | `2400` |
+| `CAE_MAX_PAGES` | `pdf_processing.max_pages` | — |
+| `CAE_CV_MAX_DIMENSION` | `pdf_processing.cv_max_dimension` | — |
+| `CAE_CV_MODE` | `pdf_processing.cv_mode` | — |
+| `CAE_QUALITY` | `pdf_processing.quality` | — |
+| `CAE_UPLOAD_LIMIT_MB` | `deployment.upload_limit_mb` | — |
+| `CAE_MAX_CONCURRENT_JOBS` | `deployment.max_concurrent_jobs` | `1` |
+
+Applied overrides are logged at startup
+(`Config overridden by environment: CAE_DPI=144 -> pdf_processing.dpi`), so you
+can confirm what the running instance actually used.
 
 ### Verify a deploy
 

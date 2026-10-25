@@ -268,6 +268,7 @@ def analyse_image(
     zoom: float,
     *,
     max_dimension: int = 2200,
+    max_elements: int = 600,
     run_members: bool = True,
     run_rects: bool = True,
     run_circles: bool = True,
@@ -278,6 +279,11 @@ def analyse_image(
     The image is downscaled to ``max_dimension`` pixels first - the vision
     detectors work on structure, not on fine detail, and the full size raster
     is both slow and memory hungry on large sheets.
+
+    ``max_elements`` is a sanity bound. On a dense detail sheet the contour
+    pass fires on every glyph and symbol, yielding thousands of "columns"; an
+    A1 plan cannot contain that many, so the whole page's CV result is treated
+    as noise and discarded rather than silently priced.
     """
     gray = load_gray(image_path)
     if gray is None:
@@ -300,5 +306,13 @@ def analyse_image(
         out.extend(detect_circles(gray, denominator, zoom))
     if run_mats:
         out.extend(detect_rebar_mats(gray, denominator, zoom))
+    if max_elements and len(out) > max_elements:
+        logger.warning(
+            "CV pass on %s produced %d candidates (limit %d) - discarded as implausible",
+            Path(image_path).name,
+            len(out),
+            max_elements,
+        )
+        return []
     logger.info("CV pass on %s -> %d candidate elements", Path(image_path).name, len(out))
     return out

@@ -23,6 +23,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from src.config import get_config  # noqa: E402
 from src.pipeline import EstimationPipeline  # noqa: E402
+from src.blueprint.scale import detect_scale_from_text, is_non_plan_sheet  # noqa: E402
 
 
 def build_sample(path: Path) -> Path:
@@ -71,6 +72,31 @@ def main() -> int:
     check("scale detected from title block", est.scale.get("method") == "text",
           f"method={est.scale.get('method')} ratio={est.scale.get('ratio')}")
     check("scale is 1:100", est.scale.get("ratio") == "1:100", str(est.scale.get("ratio")))
+
+    # Imperial title blocks: ``1/4" = 1'-0"`` is 1:48, not 1:4. Reading the bare
+    # fraction as the denominator inflated real US sets by ~144x.
+    imperial_cases = [
+        ('SCALE 1/4" = 1\'-0"', 48.0),
+        ('SCALE 1/8" = 1\'-0"', 96.0),
+        ('SCALE 1/2" = 1\'-0"', 24.0),
+        ('SCALE 1" = 50\'', 600.0),
+        ('SCALE 1 4" = 1\'-0"', 48.0),  # stacked fraction, slash lost in extraction
+    ]
+    for text, expected in imperial_cases:
+        got = detect_scale_from_text(text)
+        check(
+            f"imperial scale {text!r} -> 1:{int(expected)}",
+            got is not None and abs(got.denominator - expected) < 0.5,
+            f"got {got.denominator if got else None}",
+        )
+
+    nts = detect_scale_from_text("SCALE: NTS")
+    check("NTS sheet is marked not-to-scale", nts is not None and nts.method == "nts",
+          f"method={nts.method if nts else None}")
+    check("detail reference 1/14 is not read as a scale",
+          detect_scale_from_text("detail 1/14 AND 2/14") is None)
+    check("elevation sheet is non-plan", is_non_plan_sheet("REAR ELEVATION\nSCALE 1/4\" = 1'-0\""))
+    check("floor plan is a plan", not is_non_plan_sheet("FLOOR PLAN EXAMPLE\nSCALE 1:100"))
     check("storeys detected (G+1 -> 2)", est.storeys == 2, f"got {est.storeys}")
     check("columns detected", est.counts.get("column", 0) >= 6, f"got {est.counts.get('column')}")
     check("zones/slabs detected", est.counts.get("slab", 0) >= 4, f"got {est.counts.get('slab')}")

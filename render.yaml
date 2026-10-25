@@ -16,6 +16,17 @@ services:
         value: "false"
       - key: PYTHONUNBUFFERED
         value: "1"
+      # The free plan has 512 MB RAM. A 18-page A1 set peaks around 600 MB at the
+      # default 5200 px render, which gets the container OOM-killed mid-job.
+      # 2400 px is still well above the 2200 px the CV pass consumes, so analysis
+      # quality is unchanged; only the annotated overlay is softer. Raise these
+      # if you move to a paid plan.
+      - key: CAE_MAX_RENDER_DIMENSION
+        value: "2400"
+      - key: CAE_DPI
+        value: "144"
+      - key: CAE_MAX_CONCURRENT_JOBS
+        value: "1"
 
 # ---------------------------------------------------------------------------
 # Docker alternative
@@ -36,3 +47,7 @@ services:
 #        value: "8"
 #      - key: WEB_TIMEOUT
 #        value: "120"
+#      - key: CAE_MAX_RENDER_DIMENSION
+#        value: "2400"
+#      - key: CAE_MAX_CONCURRENT_JOBS
+#        value: "1"

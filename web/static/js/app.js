@@ -169,6 +169,21 @@
     pollTimer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/job/${jobId}`);
+        if (res.status === 404) {
+          // The instance restarted and the in-memory job registry went with it.
+          // On the free plan that usually means an out-of-memory kill.
+          showError(
+            "The analysis server restarted and lost this job. On the free plan " +
+              "that usually means the drawing was too large for its memory. " +
+              "Try a PDF with fewer pages, or run the app locally " +
+              "(python main.py --serve)."
+          );
+          el.analyseBtn.disabled = false;
+          el.analyseLabel.textContent = "Analyse drawing";
+          el.progressWrap.hidden = true;
+          return;
+        }
+        if (!res.ok) throw new Error(`Analysis server error (HTTP ${res.status}).`);
         const data = await res.json();
         if (data.status === "done") {
           setProgress(1, "Done");

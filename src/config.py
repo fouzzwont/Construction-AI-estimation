@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,56 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "config.yaml"
+
+# Environment overrides, so a deployment can be tuned without editing
+# config.yaml (the free Render plan has 512 MB RAM; a full-resolution A1 sheet
+# does not fit). The mapping is explicit because config keys contain
+# underscores themselves, which makes a generic prefix rule ambiguous.
+_ENV_OVERRIDES: dict[str, str] = {
+    "CAE_DPI": "pdf_processing.dpi",
+    "CAE_MAX_RENDER_DIMENSION": "pdf_processing.max_render_dimension",
+    "CAE_MAX_PAGES": "pdf_processing.max_pages",
+    "CAE_CV_MAX_DIMENSION": "pdf_processing.cv_max_dimension",
+    "CAE_CV_MODE": "pdf_processing.cv_mode",
+    "CAE_QUALITY": "pdf_processing.quality",
+    "CAE_UPLOAD_LIMIT_MB": "deployment.upload_limit_mb",
+    "CAE_MAX_CONCURRENT_JOBS": "deployment.max_concurrent_jobs",
+}
+
+
+def _coerce(raw: str) -> Any:
+    text = raw.strip()
+    low = text.lower()
+    if low in {"true", "yes", "on"}:
+        return True
+    if low in {"false", "no", "off"}:
+        return False
+    for cast in (int, float):
+        try:
+            return cast(text)
+        except ValueError:
+            continue
+    return text
+
+
+def apply_env_overrides(data: dict[str, Any]) -> list[str]:
+    """Apply ``CAE_*`` environment variables to a parsed config, in place."""
+    applied: list[str] = []
+    for env_key, dotted in _ENV_OVERRIDES.items():
+        raw = os.environ.get(env_key)
+        if raw is None or not raw.strip():
+            continue
+        node = data
+        parts = dotted.split(".")
+        for part in parts[:-1]:
+            child = node.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                node[part] = child
+            node = child
+        node[parts[-1]] = _coerce(raw)
+        applied.append(f"{env_key}={raw} -> {dotted}")
+    return applied
 
 
 def find_project_root(start: Path | None = None) -> Path:
@@ -130,6 +181,10 @@ def load_config(config_path: str | Path | None = None) -> Config:
     else:  # pragma: no cover - only hit when no config.yaml exists anywhere
         logger.warning("No config.yaml found, using defaults")
         data, root = {}, find_project_root()
+
+    applied = apply_env_overrides(data)
+    if applied:
+        logger.info("Config overridden by environment: %s", ", ".join(applied))
 
     return Config(data, root, path)
 

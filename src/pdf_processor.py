@@ -58,6 +58,21 @@ class PdfPage:
     def height_mm(self) -> float:
         return self.height_pt * 25.4 / 72.0
 
+    def release_content(self) -> None:
+        """Drop the parsed page content once the page has been analysed.
+
+        ``drawings`` (every path segment from ``get_drawings``) and
+        ``text_blocks`` (the full ``get_text('dict')`` tree) are large on a
+        dense A1 sheet. Retaining them for every page of a 20-page set is what
+        pushes a 512 MB instance into an out-of-memory kill, so the detector
+        calls this after each page. The pipeline is one-way: nothing reads
+        these again once the analysis exists.
+        """
+        self.drawings = []
+        self.text_blocks = []
+        self.words = []
+        self.text = ""
+
 
 class PDFProcessor:
     """Convert PDF drawings to high-resolution images and parse their content."""

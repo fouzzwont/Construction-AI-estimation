@@ -57,6 +57,11 @@ _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 _pipeline = EstimationPipeline(CFG)
 
+# Analyse one drawing at a time by default. A multi-page set already peaks near
+# 600 MB, so running two concurrently is what actually takes the free tier down.
+_MAX_CONCURRENT_JOBS = max(1, int(CFG.get("deployment.max_concurrent_jobs", 1)))
+_job_slots = threading.Semaphore(_MAX_CONCURRENT_JOBS)
+
 
 # --------------------------------------------------------------------- #
 # helpers
@@ -80,7 +85,15 @@ def _run_job(
     project_name: str,
     consent: bool = False,
 ) -> None:
+    acquired = False
     try:
+        # Queue rather than run everything at once: concurrent jobs multiply
+        # peak memory, and memory is the binding constraint on a small instance.
+        _set_job(job_id, status="queued", stage="Waiting for a free worker", progress=0.0)
+        _job_slots.acquire()
+        acquired = True
+        _set_job(job_id, status="running", stage="Starting", progress=0.0)
+
         def progress(stage: str, pct: float) -> None:
             _set_job(job_id, stage=stage, progress=round(pct, 3), status="running")
 
@@ -107,10 +120,28 @@ def _run_job(
             elapsed=output.elapsed,
         )
         logger.info("Job %s completed", job_id)
+    except MemoryError:
+        # Python-level allocation failure. An OOM kill takes the whole process
+        # down before we get here, so this is the recoverable half of the story.
+        logger.exception("Job %s ran out of memory", job_id)
+        _set_job(
+            job_id,
+            status="error",
+            stage="Failed",
+            error=(
+                "This server ran out of memory analysing the drawing. Try a PDF "
+                "with fewer pages, or lower the render resolution "
+                "(CAE_MAX_RENDER_DIMENSION). Large multi-page sets are better run "
+                "locally with python main.py --serve."
+            ),
+        )
     except Exception as exc:
         logger.error("Job %s failed: %s", job_id, exc)
         logger.debug(traceback.format_exc())
         _set_job(job_id, status="error", stage="Failed", error=str(exc))
+    finally:
+        if acquired:
+            _job_slots.release()
 
 
 # --------------------------------------------------------------------- #

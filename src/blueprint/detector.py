@@ -90,6 +90,9 @@ class BlueprintDetector:
         for page in pages:
             analysis = self._analyse_page(page, page.zoom or (dpi_zoom(self.cfg)), default_scale)
             analyses.append(analysis)
+            # Free the heavy per-page structures as we go: a 20-page set keeps
+            # ~500 MB alive otherwise, which is an OOM kill on a 512 MB host.
+            page.release_content()
 
         if analyses:
             doc_scale = scale_mod.consolidate_scales([a.scale for a in analyses])
@@ -130,6 +133,25 @@ class BlueprintDetector:
         analysis.rebar_items.extend(items)
         analysis.notes.extend(sched_notes)
 
+        # ---- not to scale --------------------------------------------- #
+        # A detail sheet marked NTS has no usable scale, so any geometry taken
+        # from it would be priced against an invented size. The schedule above
+        # is still valid because it is read from text, not from lengths.
+        if page_scale.method == "nts":
+            analysis.notes.append(
+                "sheet is marked NTS (not to scale) - no quantities taken from it"
+            )
+            return analysis
+
+        # ---- non-plan sheets ------------------------------------------ #
+        if bool(self.cfg.get("pdf_processing.plan_sheets_only", True)) and scale_mod.is_non_plan_sheet(
+            page.text
+        ):
+            analysis.notes.append(
+                "sheet is an elevation/section/detail - no plan quantities taken from it"
+            )
+            return analysis
+
         # ---- vector geometry ------------------------------------------ #
         elements: list[Element] = []
         vector_rich = len(geometry.segments) + len(geometry.rects) > 8
@@ -154,7 +176,11 @@ class BlueprintDetector:
             run_cv = scanned or cv_mode == "always"
             if run_cv:
                 cv_elements_found = cv_elements.analyse_image(
-                    page.image_path, denominator, zoom, max_dimension=cv_max_dim
+                    page.image_path,
+                    denominator,
+                    zoom,
+                    max_dimension=cv_max_dim,
+                    max_elements=int(self.cfg.get("pdf_processing.cv_max_elements", 600)),
                 )
                 if scanned:
                     elements.extend(cv_elements_found)

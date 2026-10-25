@@ -24,6 +24,8 @@ pdf_processing:
   max_render_dimension: 5200   # cap the rendered page (A1 at 300dpi = 9933px)
   cv_mode: "auto"               # auto (scanned pages only) | always | off
   cv_max_dimension: 2200        # working resolution for the vision pass
+  cv_max_elements: 600          # discard a page's CV result above this (it is noise)
+  plan_sheets_only: true        # skip elevations/sections/details for quantities
 
 image_preprocessing:
   contrast: 1.35
@@ -147,3 +149,6 @@ deployment:
   reload: false          # Flask auto-reloader (restarts the server on edits)
   cors: false
   max_workers: 2
+  # How many drawings may be analysed at once. Each multi-page set peaks near
+  # 600 MB, so this is the difference between queueing and being OOM-killed.
+  max_concurrent_jobs: 1
